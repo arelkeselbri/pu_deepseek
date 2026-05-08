@@ -37,7 +37,7 @@ The most important idea: the LLM does not directly run commands. It asks for nam
 | `.pu-history.json` | Current conversation transcript, reused across turns. |
 | `.pu-history.json.meta` | Provider/model metadata for the history file. |
 | `.pu-events.jsonl` | Append-only event log for replay, debugging, and export. |
-| `~/.pu.env` | Optional saved API key/provider/model configuration. |
+| `~/.pu.env` | Optional saved API key/provider/model/effort/reasoning configuration. |
 
 ## Running a task
 
@@ -102,6 +102,9 @@ Different APIs represent tool calls differently.
 - `TI`
 - `TINP`
 - `TX`
+- `TS`
+
+For OpenAI, public reasoning summary blocks are collected into `TS`. They are printed as dim `thinking:` lines and logged separately from normal assistant text.
 
 ## Local tools
 
@@ -141,7 +144,7 @@ Performs exact text replacement. It fails if `oldText` is missing or appears mul
 {"pattern":"TODO|FIXME","path":"."}
 ```
 
-Searches recursively while skipping common dependency/build directories.
+Searches recursively while skipping common dependency/build directories and pu trace/history files.
 
 ### `find`
 
@@ -149,7 +152,7 @@ Searches recursively while skipping common dependency/build directories.
 {"path":".","name":"*.sh"}
 ```
 
-Discovers files while pruning common dependency/build directories.
+Discovers files while pruning common dependency/build directories and pu trace/history files.
 
 ### `ls`
 
@@ -182,6 +185,8 @@ The provider only returns structured JSON. The local script controls:
 
 This makes the agent loop inspectable and modifiable.
 
+Non-read tool output is capped by `AGENT_TOOL_TRUNC`; the event log has its own `AGENT_LOG_TRUNC` cap. Both use the shared truncation helper so a single huge line is clipped instead of copied whole.
+
 ## Conversation history
 
 The transcript is stored in `MSGS` and persisted to `.pu-history.json`.
@@ -213,6 +218,10 @@ Inside interactive mode:
 
 ```text
 /session
+/model model-id
+/effort xhigh
+/reasoning auto
+/flush
 /compact focus text
 /export session.md
 ```

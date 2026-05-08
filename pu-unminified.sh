@@ -207,6 +207,18 @@ fi;
 trap '_interrupt' INT;
 trap '' PIPE;
 
+PROMPT_LAST_INPUT=""
+
+_prompt_redraw(){ printf '\r\033[K\033[36m> \033[0m%s' "$1" >&2;
+}
+
+_prompt_read(){ local line;
+printf '\033[36m> \033[0m' >&2;
+IFS= read -r line || return 1;
+INPUT=$line;
+return 0;
+}
+
 # API key hygiene: strip whitespace/quotes and normalize provider key input.
 _clean_key(){ printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^export[[:space:]]*//;s/^OPENAI_API_KEY=//;s/^ANTHROPIC_API_KEY=//;s/^"//;s/"$//;s/^'\''//;
 s/'\''$//' | tr -d '[:space:]';
@@ -220,6 +232,7 @@ case "$k" in OPENAI_API_KEY) [ -z "${OPENAI_API_KEY:-}" ] && OPENAI_API_KEY=$v;;
  AGENT_PROVIDER) [ -z "${AGENT_PROVIDER:-}" ] && AGENT_PROVIDER=$v;;
  AGENT_MODEL) [ -z "${AGENT_MODEL:-}" ] && AGENT_MODEL=$v;;
  AGENT_EFFORT) [ -z "${AGENT_EFFORT:-}" ] && AGENT_EFFORT=$v;;
+ AGENT_REASONING_SUMMARY) [ -z "${AGENT_REASONING_SUMMARY:-}" ] && AGENT_REASONING_SUMMARY=$v;;
  esac;
 done < "$HOME/.pu.env";
 }
@@ -256,6 +269,7 @@ AGENT_KEEP_RECENT="${AGENT_KEEP_RECENT:-80000}"
 # Match pu.sh's default ceilings so this readable build is behavior-compatible.
 AGENT_TOOL_TRUNC="${AGENT_TOOL_TRUNC:-100000}"
 AGENT_READ_MAX="${AGENT_READ_MAX:-1000000}"
+AGENT_LOG_TRUNC="${AGENT_LOG_TRUNC:-20000}"
 
 LOG="${AGENT_LOG:-.pu-events.jsonl}"
 HISTORY="${AGENT_HISTORY-.pu-history.json}"
@@ -265,6 +279,7 @@ CTX_LIMIT="${AGENT_CONTEXT_LIMIT:-400000}"
 VERBOSE="${AGENT_VERBOSE:-1}"
 THINKING="${AGENT_THINKING:-}"
 EFFORT="${AGENT_EFFORT:-${AGENT_THINKING:-medium}}"
+REASONING_SUMMARY="${AGENT_REASONING_SUMMARY:-auto}"
 EFFORT_OK=0
 case "$PROVIDER:$MODEL" in openai:gpt-5.5*) EFFORT_OK=1;; anthropic:claude-opus-4-7*) [ -z "${AGENT_CONTEXT_LIMIT:-}" ] && CTX_LIMIT=272000; EFFORT_OK=1;; anthropic:claude-opus-4-6*|anthropic:claude-sonnet-4-6*|anthropic:claude-opus-4-5*) EFFORT_OK=1;; esac
 
@@ -276,7 +291,7 @@ SYSTEM="${AGENT_SYSTEM:-You are an expert coding assistant. You can read, write,
 Tools: read(path,offset,limit); bash(command); edit(path,oldText,newText); write(path,content); grep(pattern,path); find(path,name); ls(path).
 Guidelines: prefer grep/find/ls over bash for exploration; working directory is $(pwd), do not cd in bash commands; combine related grep searches with alternation.
 Use read instead of cat/sed; write only for new files or complete rewrites; edit only with exact unique oldText, reading surrounding lines after failures and never retrying the same failed oldText.
-Before tool calls briefly say what you are checking/changing; be concise; show file paths clearly.
+Before tool calls briefly say what you are checking/changing and why; be concise; show file paths clearly. Do not reveal hidden chain-of-thought; use public rationale summaries only.
 Current date: $(date +%Y-%m-%d)
 Current working directory: $(pwd)
 Your source code is at $(cd "$(dirname "$0")" && pwd)/$(basename "$0"). Use read to inspect it if asked about your capabilities/configuration.}"
@@ -285,7 +300,7 @@ Your source code is at $(cd "$(dirname "$0")" && pwd)/$(basename "$0"). Use read
 
 
 while [ $# -gt 0 ];
-do case "$1" in -h|--help) printf '%s\n' 'pu-unminified.sh — readable educational build of pu.sh (sh+curl, no deps)' 'Usage: ./pu-unminified.sh "task" | ./pu-unminified.sh (interactive) | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.';
+do case "$1" in -h|--help) printf '%s\n' 'pu-unminified.sh — readable educational build of pu.sh (sh+curl, no deps)' 'Usage: ./pu-unminified.sh "task" | ./pu-unminified.sh (interactive) | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_REASONING_SUMMARY AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_LOG_TRUNC AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.';
 exit 0;;
 -v|--version)echo "pu-unminified.sh 1.0.0";
 exit 0;;
@@ -373,6 +388,22 @@ each_tool_use(){ printf '%s' "$1" | awk -v m="$2" 'BEGIN{RS="\001"}{s=$0
 oa_items(){ printf '%s' "$1" | awk 'BEGIN{RS="\001"}{d=0;q=0;e=0;for(i=1;i<=length($0);i++){c=substr($0,i,1);if(e){e=0;continue};if(c=="\\"){e=1;continue};if(c=="\""){q=!q;continue};if(q)continue;if(c=="{"){if(d==0)s=i;d++}else if(c=="}"){d--;if(d==0){o=substr($0,s,i-s+1);if(o~/"type"[ ]*:[ ]*"reasoning"/||o~/"type"[ ]*:[ ]*"function_call"/)print o}}}}';
 }
 
+# OpenAI Responses reasoning summaries live in reasoning output items as
+# summary_text blocks: {"type":"summary_text","text":"..."}.
+each_summary_text(){ printf '%s' "$1" | awk 'BEGIN{RS="\001"}{d=0;q=0;e=0;for(i=1;i<=length($0);i++){c=substr($0,i,1);if(e){e=0;continue};if(c=="\\"){e=1;continue};if(c=="\""){q=!q;continue};if(q)continue;if(c=="{"){if(d==0)s=i;d++}else if(c=="}"){d--;if(d==0){o=substr($0,s,i-s+1);if(o~/"type"[ ]*:[ ]*"summary_text"/)print o}}}}';
+}
+reasoning_summaries(){ local o t out="";
+while IFS= read -r o;
+do [ -z "$o" ] && continue;
+t=$(jp "$o" text);
+[ -n "$t" ] && out="$out${out:+
+}$t";
+done <<EOF
+$(each_summary_text "$1")
+EOF
+printf '%s' "$out";
+}
+
 # JSON helper: safely encode arbitrary text as a JSON string.
 json_escape(){ printf '%s' "$1" | LC_ALL=C tr -d '\000-\010\013\014\016-\037' | awk '{gsub(/\\/,"\\\\")} {gsub(/"/,"\\\"")} {gsub(/\t/,"\\t")} {gsub(/\r/,"\\r")} NR>1{printf "\\n"} {printf "%s",$0}';
 }
@@ -384,12 +415,25 @@ err(){ printf '\r\033[K\033[31m[!] %s\033[0m\n' "$*" >&2;
 }
 dbg(){ [ "$VERBOSE" = 1 ] && printf '\r\033[K[v] %s\n' "$*" >&2 || true;
 }
+_think(){ [ "$PIPE" = 0 ] && [ -n "$1" ] && printf '\r\033[K\033[2mthinking:\033[0m %s\n' "$1" >&2 || true;
+}
 _p(){ case "$1" in "$PWD"/*) printf '%s' "${1#"$PWD"/}";;
  "$HOME"/*) printf '~%s' "${1#"$HOME"}";;
  *) printf '%s' "$1";;
  esac;
 }
 _tool(){ [ "$PIPE" = 0 ] && printf '\r\033[K\033[2m⏺\033[0m \033[36m%s\033[0m \033[2m%s\033[0m\n' "$1" "$2" >&2 || true;
+}
+# Tool output preview: show first lines of tool output, indented and dimmed,
+# with a "more lines" marker when truncated. Skips obvious error strings since
+# err() already surfaces those in red.
+_tool_out(){ [ "$PIPE" = 0 ] || return 0;
+[ -z "$1" ] && return 0;
+case "$1" in Error:*|\[exit:*|\[denied*) return 0;; esac;
+printf '%s\n' "$1" | awk -v esc="$(printf '\033')" '
+  NR<=10 { printf "  %s[2m%s%s[0m\n", esc, $0, esc }
+  END { if (NR>10) printf "  %s[2m… (%d more lines)%s[0m\n", esc, NR-10, esc }' >&2;
+return 0;
 }
 _say(){ [ "$PIPE" = 0 ] && printf '\r\033[K%s\n' "$1" >&2 || true;
 }
@@ -398,15 +442,41 @@ d=$(dirname "$1");
 [ -n "$d" ] && [ "$d" != . ] && mkdir -p "$d" 2>/dev/null || true;
 }
 
+# Shared truncation helper for tool output and event traces.
+#
+# The first truncator was line-count based. That protected normal command output
+# but failed badly for one-line JSON blobs such as .pu-history.json: forty "lines"
+# could still be megabytes. This helper keeps the old first/last-line behavior
+# while clipping individual long lines so traces cannot recursively balloon.
+_trunc_text(){ awk -v M="$1" '
+  { a[NR]=$0; total+=length($0)+1 }
+  function clip(s, lim){
+    if(length(s)<=lim) return s
+    return "...[line truncated: " length(s) " chars]..."
+  }
+  END{
+    if(NR==0) exit
+    if(total<=M){for(i=1;i<=NR;i++) print a[i]; exit}
+    if(NR>40){marker=sprintf("...[%d lines truncated]...",NR-40); n=40}
+    else {marker="...[long lines truncated]..."; n=NR}
+    reserve=length(marker)+n+8
+    per=int((M-reserve)/n); if(per<30) per=30
+    if(NR>40){for(i=1;i<=30;i++) print clip(a[i],per); print marker; for(i=NR-9;i<=NR;i++) print clip(a[i],per)}
+    else {for(i=1;i<=NR;i++) print clip(a[i],per); print marker}
+  }'
+}
+
 # Event logging: append timestamped JSON objects to the project event log.
 log(){ _mkparent "$LOG";
-printf '{"s":%s,"t":"%s","c":"%s"}\n' "$1" "$2" "$(json_escape "$3")" >> "$LOG";
+local c="$3";
+[ ${#c} -gt "$AGENT_LOG_TRUNC" ] && c=$(printf '%s' "$c" | _trunc_text "$AGENT_LOG_TRUNC")
+printf '{"s":%s,"t":"%s","c":"%s"}\n' "$1" "$2" "$(json_escape "$c")" >> "$LOG";
 }
 _num(){ case "$2" in ''|*[!0-9]*) err "$1 must be a non-negative integer";
 exit 1;;
  esac;
 }
-for _nv in MAX_STEPS:$MAX_STEPS MAX_TOKENS:$MAX_TOKENS CTX_LIMIT:$CTX_LIMIT AGENT_RESERVE:$AGENT_RESERVE AGENT_KEEP_RECENT:$AGENT_KEEP_RECENT AGENT_TOOL_TRUNC:$AGENT_TOOL_TRUNC AGENT_READ_MAX:$AGENT_READ_MAX;
+for _nv in MAX_STEPS:$MAX_STEPS MAX_TOKENS:$MAX_TOKENS CTX_LIMIT:$CTX_LIMIT AGENT_RESERVE:$AGENT_RESERVE AGENT_KEEP_RECENT:$AGENT_KEEP_RECENT AGENT_TOOL_TRUNC:$AGENT_TOOL_TRUNC AGENT_READ_MAX:$AGENT_READ_MAX AGENT_LOG_TRUNC:$AGENT_LOG_TRUNC;
 do _num "${_nv%%:*}" "${_nv#*:}";
 done
 [ "$CTX_LIMIT" -gt "$AGENT_RESERVE" ] || { err "AGENT_CONTEXT_LIMIT must be greater than AGENT_RESERVE";
@@ -488,9 +558,13 @@ case "$eb" in minimal|low) [ $mt -lt 4096 ] && mt=4096;;
     -d "{\"model\":\"$MODEL\",\"max_tokens\":$mt,\"system\":\"$sys_esc\",\"tools\":[$TD],\"messages\":$1${tp}}" \
     https://api.anthropic.com/v1/messages 2>&1;;
 
-  openai) local rp='';
+  openai) local rp='' rs='';
+case "$REASONING_SUMMARY" in ''|none|off|0|false) rs='';;
+ concise|detailed|auto) rs=',"summary":"'$REASONING_SUMMARY'"';;
+ *) rs=',"summary":"auto"';;
+ esac;
 [ "$EFFORT_OK" = 1 ] && case "$EFFORT" in ''|none) ;;
- *) rp=',"reasoning":{"effort":"'$EFFORT'"}';;
+ *) rp=',"reasoning":{"effort":"'$EFFORT'"'$rs'}';;
  esac
     curl -sS -m120 \
     -H "Authorization: Bearer ${OPENAI_API_KEY:-}" \
@@ -520,10 +594,11 @@ case "$eb" in minimal|low) [ $mt -lt 4096 ] && mt=4096;;
 #   TI        Provider call identifier used to pair results.
 #   TINP     JSON arguments for the tool.
 #   TX      Assistant text, if any.
+#   TS      Provider-supplied reasoning summary text, if available.
 #   CB / TC
 #                              Provider-native blocks kept for valid history.
 parse_response(){ local resp="$1";
-TY= TN= TI= TX= CB= TINP= TC=
+TY= TN= TI= TX= TS= CB= TINP= TC=
   if [ "$PROVIDER" = anthropic ];
 then
     local tu;
@@ -546,6 +621,7 @@ TX=$(jp "$tt" text)
     fi
   else
     TC=$(jp "$resp" output);
+TS=$(reasoning_summaries "$resp");
 local call;
 call=$(jb "$TC" function_call)
     if [ -n "$call" ];
@@ -622,9 +698,11 @@ case "$fp" in -*) fp="./$fp";;
       local off;
 off=$(jp "$input" offset);
 [ "$off" = 0 ] && off=1
-      local lim;
+      local lim _rd_disp;
 lim=$(jp "$input" limit);
-_tool read "$(_p "$fp")"
+_rd_disp=$(_p "$fp");
+[ -n "$off" ] && _rd_disp="$_rd_disp:$off${lim:+-$((off+lim-1))}";
+_tool read "$_rd_disp"
       if [ -f "$fp" ];
 then
         case "$off" in ""|*[!0-9]*) [ -z "$off" ] || { out="Error: offset must be a positive integer";
@@ -774,7 +852,7 @@ gp=$(jp "$input" path);
       _tool grep "$pat $(_p "$gp")"
       case "$gp" in -*) gp="./$gp";;
  esac
-      out=$(grep -rnIE --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target --exclude-dir=.venv -- "$pat" "$gp" 2>&1);
+      out=$(grep -rnIE --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=target --exclude-dir=.venv --exclude=.pu-events.jsonl --exclude=.pu-history.json --exclude=.pu-history.json.meta --exclude=agent.jsonl -- "$pat" "$gp" 2>&1);
 rc=$?;
 [ $rc -eq 1 ] && { out="No matches";
 rc=0;
@@ -793,8 +871,8 @@ fn=$(jp "$input" name)
       case "$fp" in -*) fp="./$fp";;
  esac
       if [ -n "$fn" ];
-then out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv \) -prune -o -name "$fn" -print 2>&1 | head -100);
-else out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv \) -prune -o -print 2>&1 | awk -v root="$fp" '{p=$0;if(index(p,root)==1){p=substr(p,length(root)+1);sub("^/","",p)};n=gsub("/","/",p);if(p==""||n<3)print}' | head -100);
+then out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv -o -name .pu-events.jsonl -o -name .pu-history.json -o -name .pu-history.json.meta -o -name agent.jsonl \) -prune -o -name "$fn" -print 2>&1 | head -100);
+else out=$(find "$fp" \( -name .git -o -name node_modules -o -name dist -o -name build -o -name target -o -name .venv -o -name .pu-events.jsonl -o -name .pu-history.json -o -name .pu-history.json.meta -o -name agent.jsonl \) -prune -o -print 2>&1 | awk -v root="$fp" '{p=$0;if(index(p,root)==1){p=substr(p,length(root)+1);sub("^/","",p)};n=gsub("/","/",p);if(p==""||n<3)print}' | head -100);
 fi;;
 
     # ls: directory inspection. Kept simple because the model already receives
@@ -814,8 +892,7 @@ rc=1;;
 
   esac
   M="$AGENT_TOOL_TRUNC";
-[ "$tool_name" != read ] && [ ${#out} -gt "$M" ] && out="$(printf '%s\n' "$out" | awk '{a[NR]=$0}END{if(NR<=40){for(i=1;i<=NR;i++)print a[i];exit}for(i=1;i<=30;i++)print a[i];printf "...[%d lines hidden;
-call read with offset/limit to view a specific range]...\n",NR-40;for(i=NR-9;i<=NR;i++)print a[i]}')"
+[ "$tool_name" != read ] && [ ${#out} -gt "$M" ] && out="$(printf '%s' "$out" | _trunc_text "$M")"
   printf '%s' "$out";
 }
 
@@ -848,6 +925,7 @@ done >&2;
 # Conversation builder: append user/assistant/tool messages to the JSON transcript.
 append(){ [ "$MSGS" = "[]" ] && MSGS="[$1]" || MSGS=$(printf '%s' "$MSGS" | sed 's/]$//')",$1]";
 }
+
 RA='"role":"assistant"' RU='"role":"user"' RT='"role":"tool"'
 TOKEN_IN=0 TOKEN_OUT=0 COST_USD=0
 track_tokens(){ local u a b;
@@ -1196,6 +1274,7 @@ return 1;
     track_tokens "$resp"
     # Phase 3: normalize provider-specific JSON into common parse variables.
     parse_response "$resp"
+    [ -n "$TS" ] && [ "$TS" != null ] && { _think "$TS"; log "$step" reasoning "$TS"; }
     if [ "$TY" = "T" ] && [ -n "$TN" ];
 then
       [ -n "$TX" ] && [ "$TX" != null ] && _say "$TX"
@@ -1243,6 +1322,7 @@ spin_stop
 return 130;
 }
         log "$step" tool_result "$_tout";
+_tool_out "$_tout";
 case "$_tout" in Error:*|\[exit:*|\[denied*) [ "$PIPE" = 0 ] && err "$_tout";;
  esac;
 _tesc=$(json_escape "$_tout")
@@ -1398,7 +1478,7 @@ export "$km=$k" AGENT_PROVIDER="$PROVIDER" AGENT_MODEL="$MODEL" AGENT_EFFORT="$E
 read -r s;
 case "$s" in n|N|no|NO) info "Not saved (set in this session only)";;
  *) (umask 077;
-printf '%s=%s\nAGENT_PROVIDER=%s\nAGENT_MODEL=%s\nAGENT_EFFORT=%s\n' "$km" "$(_sq "$k")" "$(_sq "$PROVIDER")" "$(_sq "$MODEL")" "$(_sq "$EFFORT")" > "$HOME/.pu.env") && info "Saved ~/.pu.env";;
+printf '%s=%s\nAGENT_PROVIDER=%s\nAGENT_MODEL=%s\nAGENT_EFFORT=%s\nAGENT_REASONING_SUMMARY=%s\n' "$km" "$(_sq "$k")" "$(_sq "$PROVIDER")" "$(_sq "$MODEL")" "$(_sq "$EFFORT")" "$(_sq "$REASONING_SUMMARY")" > "$HOME/.pu.env") && info "Saved ~/.pu.env";;
  esac;
 }
 
@@ -1428,9 +1508,23 @@ EFFORT=$ef;
 };
 info "Effort: $EFFORT";
 return 0;;
+
+  /reasoning|/reasoning\ *) local rs;
+rs=$(printf '%s' "$1" | sed 's|^/reasoning *||');
+[ -n "$rs" ] && { case "$rs" in off|none|0|false) rs=off;; c) rs=concise;; d) rs=detailed;; a) rs=auto;; esac;
+case "$rs" in off|concise|detailed|auto) REASONING_SUMMARY=$rs;; *) err "Usage: /reasoning [auto|concise|detailed|off]"; return 0;; esac;
+};
+info "Reasoning summaries: $REASONING_SUMMARY";
+return 0;;
  /flush) MSGS="";
-[ -n "$HISTORY" ] && printf '[]' > "$HISTORY";
-info "Flushed conversation memory";
+[ -n "$HISTORY" ] && { _mkparent "$HISTORY";
+printf '[]' > "$HISTORY";
+rm -f "$HISTORY.meta";
+};
+[ -n "$LOG" ] && { _mkparent "$LOG";
+: > "$LOG";
+};
+info "Flushed conversation memory and event log";
 return 0;;
  /quit|/exit) exit 0;;
 
@@ -1487,18 +1581,19 @@ info "Resumed memory: $HISTORY (/flush to clear)";
 } || true;
 [ -n "$TASK" ] && { info "$TASK";
 info "$MODEL ($PROVIDER) max steps: $MAX_STEPS";
+PROMPT_LAST_INPUT=$TASK;
 run_task "$TASK";
 rc=$?;
 [ "$INTERACTIVE" = 1 ] || exit "$rc";
 } || true
-info "$MODEL ($PROVIDER) | /model /effort /login /logout /flush /compact /export /skill:name /quit | !cmd";
+info "$MODEL ($PROVIDER) | /model /effort /reasoning /login /logout /flush /compact /export /skill:name /quit | !cmd";
 while true;
 do _STATE=idle;
-printf '\033[36m> \033[0m' >&2;
-read -r INPUT || break;
+_prompt_read INPUT || break;
 case "$INPUT" in quit|exit|q) break;;
  ''|' ') continue;;
  esac;
 handle_cmd "$INPUT" && continue || true;
+PROMPT_LAST_INPUT=$INPUT;
 run_task "$INPUT";
 done

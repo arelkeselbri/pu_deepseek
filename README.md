@@ -98,7 +98,7 @@ Pi + Node           281 MB            ██████████████
 SWE-agent Docker    1.8 GB            ██████████████████████████████████████████████████████████████...
 ```
 
-*Measured locally on macOS arm64. Current generated `pu.sh` is 45.98 KB by `wc -c`; the headline stays under 50 KB. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
+*Measured locally on macOS arm64. Current generated `pu.sh` is 49,284 bytes (48.13 KiB) by `wc -c`; the headline stays under 50 KB. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
 
 ## Configuration
 
@@ -111,6 +111,7 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 | `ANTHROPIC_API_KEY` | — | Anthropic API key |
 | `OPENAI_API_KEY` | — | OpenAI API key |
 | `AGENT_EFFORT` | `medium` | `none|minimal|low|medium|high|xhigh|max`; unsupported models omit effort fields |
+| `AGENT_REASONING_SUMMARY` | `auto` | OpenAI reasoning summary request: `auto|concise|detailed|off` |
 | `AGENT_THINKING` | — | Legacy/Anthropic thinking hint; falls back into effort behavior |
 | `AGENT_MAX_STEPS` | `100` | Max API/tool-loop steps before stopping |
 | `AGENT_MAX_TOKENS` | `4096` | Base visible-output budget; raised for higher effort |
@@ -119,6 +120,7 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 | `AGENT_KEEP_RECENT` | `80000` | Approx bytes/chars of recent transcript to keep after compaction |
 | `AGENT_TOOL_TRUNC` | `100000` | Max non-read tool output before truncation |
 | `AGENT_READ_MAX` | `1000000` | Require offset/limit for larger file reads |
+| `AGENT_LOG_TRUNC` | `20000` | Max event-log payload before trace-only truncation |
 | `AGENT_CONFIRM` | `0` | `1` = ask before each tool call |
 | `AGENT_LOG` | `.pu-events.jsonl` | Event/debug JSONL log file |
 | `AGENT_HISTORY` | `.pu-history.json` | Checkpoint file for automatic resume |
@@ -132,9 +134,10 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 |---|---|
 | `/model [id]` | Show or switch model; guesses provider from `gpt-*`/`o*`/`claude-*` |
 | `/effort [level]` | Show or set reasoning effort (`none`, `low`, `medium`, `high`, `xhigh`, etc.) |
+| `/reasoning [mode]` | Show or set OpenAI reasoning summaries (`auto`, `concise`, `detailed`, `off`) |
 | `/login` | Run API-key setup wizard |
 | `/logout` | Remove `~/.pu.env` and unset in-process keys |
-| `/flush` | Clear conversation memory and reset the history file to `[]` |
+| `/flush` | Reset the session: clear memory/history, remove history metadata, and truncate event log |
 | `/compact [focus]` | Summarize older context, optionally with focus text |
 | `/export [file]` | Export event log to markdown |
 | `/skill:name` | Load `name/SKILL.md` into the system prompt |

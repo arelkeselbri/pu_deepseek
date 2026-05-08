@@ -7,13 +7,14 @@ Current validation:
 ```sh
 sh -n pu.sh
 bash eval/test_real.sh
-# PASS: 90 FAIL: 0 TOTAL: 90
+# PASS: 110 FAIL: 0 TOTAL: 110
 ```
 
 Current size:
 
 ```text
-396 pu.sh
+49284 bytes pu.sh
+482 lines pu.sh
 ```
 
 ## Recently fixed
@@ -262,6 +263,22 @@ Use `/effort xhigh`, `/effort low`, or `/effort none`.
 **Status:** fixed.
 
 The `write` tool no longer writes directly to the destination with shell redirection. It now writes content to a `mktemp` file in the target directory, applies the existing file mode when overwriting or a normal umask-derived mode for new files, then `mv`s the temp file into place. Symlink paths are resolved before writing so `write` continues to update the linked target rather than replacing the symlink itself.
+
+### 27. Event traces could recursively balloon on one-line history/log files
+
+**Status:** fixed.
+
+`grep`/`find` now skip `.pu-events.jsonl`, `.pu-history.json`, `.pu-history.json.meta`, and `agent.jsonl` by default, so normal project searches do not ingest pu's own traces. Tool truncation also clips individual giant lines, and event logging has a separate `AGENT_LOG_TRUNC` cap so a single read/search result cannot append megabytes of escaped prior history back into `.pu-events.jsonl`.
+
+Regression coverage: `TR-8`, `TR-9`, `ED-15a`, `ED-15b`, and `ED-15c`.
+
+### 28. `/flush` left event replay/history sidecar behind
+
+**Status:** fixed.
+
+`/flush` previously cleared in-memory transcript state and wrote `[]` to `.pu-history.json`, but it left `.pu-history.json.meta` and `.pu-events.jsonl` intact. That made resume/replay feel like an old session still existed after the model memory had been reset. `/flush` now resets the local session: history becomes `[]`, the meta sidecar is removed, and the event log is truncated.
+
+Regression coverage: `ED-17`.
 
 ## Known remaining limitations / bugs to consider
 

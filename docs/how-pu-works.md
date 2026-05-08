@@ -15,6 +15,7 @@ It is intentionally small: one shell file, `curl`, `awk`, and common Unix tools.
 | File | Purpose |
 |---|---|
 | `.pu-history.json` | Model memory / resumable provider transcript |
+| `.pu-history.json.meta` | Provider/model marker for safe resume |
 | `.pu-events.jsonl` | Event log for replay, debugging, and `/export` |
 | `~/.pu.env` | Optional saved API key/provider/model/effort from login |
 
@@ -31,7 +32,7 @@ The split is intentional.
 {"s":2,"t":"response","c":"done"}
 ```
 
-On startup, if `.pu-history.json` has real memory for the current provider/model, `pu.sh` loads it and replays the last visible messages from the tail of `.pu-events.jsonl`. Use `/flush` to clear memory. Startup intentionally uses a cheap history shape check rather than full JSON validation; full awk validation made resumed sessions noticeably slow.
+On startup, if `.pu-history.json` has real memory for the current provider/model, `pu.sh` loads it and replays the last visible messages from the tail of `.pu-events.jsonl`. Use `/flush` to reset memory, history metadata, and replay logs. Startup intentionally uses a cheap history shape check rather than full JSON validation; full awk validation made resumed sessions noticeably slow.
 
 ## Provider loops
 
@@ -71,6 +72,8 @@ Tool turns preserve the required item sequence:
 
 Keeping `reasoning` with its `function_call` matters. OpenAI can reject a transcript if a function call is retained without its required reasoning item.
 
+When supported, OpenAI can also return public reasoning summaries. `AGENT_REASONING_SUMMARY` defaults to `auto`, and `/reasoning` changes it interactively.
+
 ## Tools
 
 The model can call seven tools:
@@ -86,8 +89,9 @@ Important semantics:
 - `edit` requires exactly one `oldText` match and rejects empty/non-unique replacements.
 - `edit` uses a temp file and preserves executable mode where possible.
 - `edit` reads the file as one awk record with `RS="\\001"`. Do not change this to `RS="\\0"`; on macOS/BSD awk, NUL record separators are not a reliable whole-file trick and can make exact matches later in a file fail.
-- `grep`/`find` skip common noisy directories like `.git`, `node_modules`, `dist`, `build`, `target`, and `.venv`.
-- non-read tool output is truncated if it exceeds `AGENT_TOOL_TRUNC`.
+- `grep`/`find` skip common noisy directories plus pu trace/history files such as `.pu-events.jsonl`, `.pu-history.json`, `.pu-history.json.meta`, and `agent.jsonl`.
+- non-read tool output is truncated if it exceeds `AGENT_TOOL_TRUNC`, with giant single lines clipped instead of preserved whole.
+- event-log payloads are separately capped by `AGENT_LOG_TRUNC` so trace files cannot recursively balloon.
 
 `pu.sh` is not sandboxed. Tools run in your current working directory with your permissions.
 
@@ -152,19 +156,13 @@ To use a different memory file:
 AGENT_HISTORY=my-session.json ./pu.sh
 ```
 
-To clear memory:
+To reset the session:
 
 ```text
 /flush
 ```
 
-This resets in-memory transcript state and writes:
-
-```json
-[]
-```
-
-to the history file. It does not delete `.pu-events.jsonl`.
+This clears the in-memory transcript, writes `[]` to the history file, removes the history `.meta` sidecar, and truncates `.pu-events.jsonl`. Resume after `/flush` starts from a clean history and replay log.
 
 ## Retry policy
 
@@ -185,7 +183,8 @@ to the history file. It does not delete `.pu-events.jsonl`.
 | `AGENT_CONFIRM=1` | Ask before every tool call |
 | `AGENT_READ_MAX=1000000` | Refuse huge whole-file reads |
 | `AGENT_TOOL_TRUNC=100000` | Truncate large non-read tool output |
-| `/flush` | Clear resumed memory |
+| `AGENT_LOG_TRUNC=20000` | Truncate large event-log payloads without changing model-visible tool output |
+| `/flush` | Clear resumed memory, history metadata, and event replay log |
 | `AGENT_DEBUG_API=dir` | Capture request input/response JSON for debugging |
 
 ## Limitations

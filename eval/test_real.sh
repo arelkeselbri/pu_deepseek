@@ -515,10 +515,10 @@ echo
 printf "${B}━━━ tool truncation ━━━${N}\n"
 AGENT_TOOL_TRUNC=2000
 
-# Replicate the inline truncation snippet from pu.sh:206 for direct testing.
+# Exercise the same helper run_tool/log use for direct testing.
 truncate_out(){ local out="$1" M
   M="${AGENT_TOOL_TRUNC:-2000}"
-  [ ${#out} -gt "$M" ] && out="$(printf '%s\n' "$out" | awk '{a[NR]=$0}END{if(NR<=40){for(i=1;i<=NR;i++)print a[i];exit}for(i=1;i<=30;i++)print a[i];printf "...[%d lines truncated]...\n",NR-40;for(i=NR-9;i<=NR;i++)print a[i]}')"
+  [ ${#out} -gt "$M" ] && out="$(printf '%s' "$out" | _trunc_text "$M")"
   printf '%s' "$out"
 }
 
@@ -558,6 +558,24 @@ ESC=$(json_escape "$OUT")
 valid_json "$(printf '{"x":"%s"}' "$ESC")" \
   && pass "TR-7" "truncated output → json_escape → valid JSON" \
   || fail "TR-7" "truncated→escape produces invalid JSON"
+
+ONE_LINE=$(python3 - <<'PY'
+print('x' * 100000)
+PY
+)
+OUT=$(truncate_out "$ONE_LINE")
+[ ${#OUT} -lt 2000 ] && printf '%s' "$OUT" | grep -q 'line truncated' \
+  && pass "TR-8" "single huge line is clipped instead of preserved whole" \
+  || fail "TR-8" "single huge line not clipped" "len=${#OUT}"
+
+UTF_ONE=$(python3 - <<'PY'
+print('é' * 5000)
+PY
+)
+OUT=$(truncate_out "$UTF_ONE")
+printf '%s' "$OUT" | python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' 2>/dev/null \
+  && pass "TR-9" "single huge UTF-8 line truncates without corrupting bytes" \
+  || fail "TR-9" "UTF-8 long-line truncation corrupted bytes"
 
 # ── edit tool: multi-line oldText/newText (regression) ────────────
 echo
@@ -642,11 +660,23 @@ printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_
 OUT=$(run_tool find "{\"path\":\"$TMPD/search\",\"name\":\"a.txt\"}")
 printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q node_modules \
   && pass "ED-15" "find prunes noisy directories" || fail "ED-15" "find exclusions" "got=$OUT"
+printf 'match hidden trace\n' > "$TMPD/search/.pu-history.json"; printf 'match hidden log\n' > "$TMPD/search/.pu-events.jsonl"; printf 'match ignored agent log\n' > "$TMPD/search/agent.jsonl"
+OUT=$(run_tool grep "{\"path\":\"$TMPD/search\",\"pattern\":\"match\"}")
+printf '%s' "$OUT" | grep -q 'src/a.txt' && ! printf '%s' "$OUT" | grep -q '.pu-history\|.pu-events\|agent.jsonl' \
+  && pass "ED-15a" "grep skips pu trace/history files" || fail "ED-15a" "grep included trace files" "got=$OUT"
+OUT=$(run_tool find "{\"path\":\"$TMPD/search\",\"name\":\"*.jsonl\"}")
+[ -z "$OUT" ] \
+  && pass "ED-15b" "find skips pu trace/history files" || fail "ED-15b" "find included trace files" "got=$OUT"
+LOG="$TMPD/logcap.jsonl"; AGENT_LOG_TRUNC=2000
+log 1 tool_result "$ONE_LINE"
+LLEN=$(wc -c < "$LOG" | tr -d ' ')
+[ "$LLEN" -lt 3000 ] && grep -q 'line truncated' "$LOG" \
+  && pass "ED-15c" "event log clips huge trace payloads" || fail "ED-15c" "event log payload too large" "bytes=$LLEN"
 PIPE=1; EFFORT=medium; handle_cmd '/effort xh' >/dev/null 2>/dev/null
 [ "$EFFORT" = xhigh ] && pass "ED-16" "/effort changes effort interactively" || fail "ED-16" "/effort" "EFFORT=$EFFORT"
-MSGS='[{"role":"user","content":"hi"}]'; HISTORY="$TMPD/flush_hist.json"; handle_cmd '/flush' >/dev/null 2>/dev/null
-[ -z "$MSGS" ] && [ "$(cat "$HISTORY")" = '[]' ] \
-  && pass "ED-17" "/flush clears conversation memory and history" || fail "ED-17" "/flush" "MSGS=$MSGS hist=$(cat "$HISTORY")"
+MSGS='[{"role":"user","content":"hi"}]'; HISTORY="$TMPD/flush_hist.json"; LOG="$TMPD/flush_events.jsonl"; printf stale > "$LOG"; printf openai:gpt-5.5 > "$HISTORY.meta"; handle_cmd '/flush' >/dev/null 2>/dev/null
+[ -z "$MSGS" ] && [ "$(cat "$HISTORY")" = '[]' ] && [ ! -e "$HISTORY.meta" ] && [ ! -s "$LOG" ] \
+  && pass "ED-17" "/flush clears memory, history, and events" || fail "ED-17" "/flush" "MSGS=$MSGS hist=$(cat "$HISTORY" 2>/dev/null) meta=$([ -e "$HISTORY.meta" ] && echo yes || echo no) log_bytes=$(wc -c < "$LOG" 2>/dev/null || echo missing)"
 MSGS=x; load >/dev/null 2>/dev/null; RC=$?
 [ $RC -ne 0 ] && [ -z "$MSGS" ] && pass "ED-18" "empty [] history is not treated as resumed" || fail "ED-18" "empty history resume" "rc=$RC MSGS=$MSGS"
 LOG="$TMPD/replay.jsonl"; printf '%s\n' '{"s":0,"t":"start","c":"old"}' '{"s":1,"t":"tool_call","c":"read: {\"path\":\"pu.sh\"}"}' '{"s":2,"t":"response","c":"done"}' > "$LOG"; INTERACTIVE=1
