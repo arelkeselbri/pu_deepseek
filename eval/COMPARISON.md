@@ -10,8 +10,8 @@ They are not in the same category. That is the point.
 
 | Dimension | Pi | pu.sh |
 |---|---|---|
-| Runtime | Node/TypeScript app | One `#!/bin/sh` file |
-| Size on this machine | ~281 MB with Node/package footprint | 37 KB / 396 LOC |
+| Runtime | Node/TypeScript app | One `#!/bin/sh` file, zero package dependencies |
+| Size on this machine | ~281 MB with Node/package footprint | under 50 KB shell file |
 | Providers | 20+ | 2: Anthropic + OpenAI |
 | Auth | API keys + richer provider flows | API keys + optional `~/.pu.env` |
 | UI | Full TUI | plain REPL / pipe mode |
@@ -130,7 +130,7 @@ But Pi remains far ahead on everything that benefits from a real runtime: stream
 
 ## The tradeoff in one line
 
-> Pi is the real coding agent. `pu.sh` is the smallest useful fossil of one: ~400 lines, 37 KB, `sh` + `curl` + `awk`, and no build step.
+> Pi is the real coding agent. `pu.sh` is the smallest useful fossil of one: under 50 KB, zero package dependencies, `sh` + `curl` + `awk`, and no build step.
 
 ## Where pu.sh is genuinely useful
 

@@ -882,17 +882,32 @@ _ctx_entries(){ printf '%s' "$1" | awk '
   BEGIN{RS="\001"; max=12000; outmax=4000; pending=""; ptype=""}
   function balanced(s, i,c,q,e,d){d=0;q=0;e=0;for(i=1;i<=length(s);i++){c=substr(s,i,1);if(e){e=0;continue};if(c=="\\"){if(q)e=1;continue};if(c=="\""){q=!q;continue};if(q)continue;if(c=="{")d++;else if(c=="}")d--}return d==0&&!q}
   function callid(s, t){if(match(s,/"call_id"[ \t]*:[ \t]*"[^"]+"/)){t=substr(s,RSTART,RLENGTH);sub(/^.*"call_id"[ \t]*:[ \t]*"/,"",t);sub(/"$/,"",t);return t}return "omitted"}
+  function tooluid(s, t){if(match(s,/"tool_use_id"[ \t]*:[ \t]*"[^"]+"/)){t=substr(s,RSTART,RLENGTH);sub(/^.*"tool_use_id"[ \t]*:[ \t]*"/,"",t);sub(/"$/,"",t);return t}return "omitted"}
+  function toolid(s, t){if(match(s,/"id"[ \t]*:[ \t]*"[^"]+"/)){t=substr(s,RSTART,RLENGTH);sub(/^.*"id"[ \t]*:[ \t]*"/,"",t);sub(/"$/,"",t);return t}return "omitted"}
+  function fname(s, t){if(match(s,/"name"[ \t]*:[ \t]*"[^"]+"/)){t=substr(s,RSTART,RLENGTH);sub(/^.*"name"[ \t]*:[ \t]*"/,"",t);sub(/"$/,"",t);return t}return "omitted"}
   function outstub(s){return "{\"type\":\"function_call_output\",\"call_id\":\"" callid(s) "\",\"output\":\"[large or malformed tool output omitted during compaction: " length(s) " chars]\"}"}
   function msgstub(s){return "{\"role\":\"user\",\"content\":\"[large or malformed message omitted during compaction: " length(s) " chars]\"}"}
-  function emit(e){if(e~/^\{[ \t]*"type"[ \t]*:[ \t]*"function_call_output"/){if(length(e)<=outmax&&balanced(e))print e;else print outstub(e)}else if(e~/^\{[ \t]*"(role|id|type)"/){if(length(e)<=max&&balanced(e))print e;else if(e~/^\{[ \t]*"role"/)print msgstub(e)}}
+  function toolresultstub(s){return "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"" tooluid(s) "\",\"content\":\"[large or malformed tool result omitted during compaction: " length(s) " chars]\"}]}"}
+  function toolusestub(s){return "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"" toolid(s) "\",\"name\":\"" fname(s) "\",\"input\":{\"omitted\":\"large or malformed tool input omitted during compaction: " length(s) " chars\"}}]}"}
+  function rolestub(s){if(s~/"type"[ \t]*:[ \t]*"tool_result"/)return toolresultstub(s);if(s~/"type"[ \t]*:[ \t]*"tool_use"/)return toolusestub(s);return msgstub(s)}
+  function callstub(s){return "{\"type\":\"function_call\",\"call_id\":\"" callid(s) "\",\"name\":\"" fname(s) "\",\"arguments\":\"{\\\"omitted\\\":\\\"large or malformed tool arguments omitted during compaction: " length(s) " chars\\\"}\"}"}
+  function iscall(s){return s~/"type"[ \t]*:[ \t]*"function_call"/ && s!~/"type"[ \t]*:[ \t]*"function_call_output"/}
+  function emit(e){if(e~/^\{[ \t]*"type"[ \t]*:[ \t]*"function_call_output"/){if(length(e)<=outmax&&balanced(e))print e;else print outstub(e)}else if(iscall(e)){if(length(e)<=max&&balanced(e))print e;else print callstub(e)}else if(e~/^\{[ \t]*"(role|id|type)"/){if(length(e)<=max&&balanced(e))print e;else if(e~/^\{[ \t]*"role"/)print rolestub(e)}}
   {data=$0;sub(/^\[/,"",data);sub(/\]$/,"",data);n=split(data,a,/\},\{/);for(i=1;i<=n;i++){raw=a[i]
-    if(pending!=""){pending=pending "},{" raw; cand=pending; if(i<n)cand=cand "}"; if(length(cand)>max){if(ptype=="role")print msgstub(cand); pending=""; ptype=""; continue}; if(balanced(cand)){print cand; pending=""; ptype=""}; continue}
+    if(pending!=""){pending=pending "},{" raw; cand=pending; if(i<n)cand=cand "}"; if(length(cand)>max){if(ptype=="role")print rolestub(cand); else if(iscall(cand))print callstub(cand); pending=""; ptype=""; continue}; if(balanced(cand)){print cand; pending=""; ptype=""}; continue}
     e=(i>1?"{":"") raw; cand=e; if(i<n)cand=cand "}"; if(cand~/^\{[ \t]*"type"[ \t]*:[ \t]*"function_call_output"/){if(length(cand)<=outmax&&balanced(cand))print cand;else print outstub(cand); continue}
     if(cand~/^\{[ \t]*"(role|id|type)"/ && !balanced(cand) && length(cand)<=max){pending=e; ptype=(cand~/^\{[ \t]*"role"/?"role":"other"); continue}; emit(cand)}}'
 }
 _ctx_filter_openai_pairs(){ printf '%s\n' "$1" | awk '
   function callid(s, t){if(match(s,/"call_id"[ \t]*:[ \t]*"[^"]+"/)){t=substr(s,RSTART,RLENGTH);sub(/^.*"call_id"[ \t]*:[ \t]*"/,"",t);sub(/"$/,"",t);return t}return ""}
   {id=callid($0); if($0~/^\{.*"type"[ \t]*:[ \t]*"function_call"/ && $0!~/^\{.*"type"[ \t]*:[ \t]*"function_call_output"/){if(id!="")seen[id]=1; print; next}; if($0~/^\{.*"type"[ \t]*:[ \t]*"function_call_output"/){if(id!="" && seen[id])print; next}; print}' ;
+}
+_ctx_filter_anthropic_pairs(){ printf '%s\n' "$1" | awk '
+  function ids(s,key,  rest,t,id){rest=s;while(match(rest,"\\\"" key "\\\"[ \\t]*:[ \\t]*\\\"[^\\\"]+\\\"")){t=substr(rest,RSTART,RLENGTH);sub("^.*\\\"" key "\\\"[ \\t]*:[ \\t]*\\\"","",t);sub("\\\"$","",t);id=t;out=out " " id;rest=substr(rest,RSTART+RLENGTH)};return out}
+  function okuse(list,idx,  n,j,b){n=split(list,b," ");for(j=1;j<=n;j++)if(b[j]!=""&&(!(b[j] in resAt)||resAt[b[j]]<=idx))return 0;return 1}
+  function okres(list,idx,  n,j,b){n=split(list,b," ");for(j=1;j<=n;j++)if(b[j]!=""&&(!(b[j] in useAt)||useAt[b[j]]>=idx))return 0;return 1}
+  {a[++n]=$0; if($0~/"type"[ \t]*:[ \t]*"tool_use"/){out="";u=ids($0,"id");useLine[n]=u;nid=split(u,b," ");for(i=1;i<=nid;i++)if(b[i]!=""&&!(b[i] in useAt))useAt[b[i]]=n}; if($0~/"type"[ \t]*:[ \t]*"tool_result"/){out="";r=ids($0,"tool_use_id");resLine[n]=r;nid=split(r,b," ");for(i=1;i<=nid;i++)if(b[i]!=""&&!(b[i] in resAt))resAt[b[i]]=n}}
+  END{for(i=1;i<=n;i++){if(useLine[i]!=""&&!okuse(useLine[i],i))continue;if(resLine[i]!=""&&!okres(resLine[i],i))continue;print a[i]}}' ;
 }
 _ctx_valid(){ local x="$1" cap="$2";
 case "$x" in \[*\]) ;;
@@ -945,26 +960,50 @@ case "$m" in *'"type":"function_call_output"'*|*'"type"'*'"function_call_output"
 return;;
  esac
   o=$(_ctx_entries "$m");
-f=$(_ctx_filter_openai_pairs "$o");
-[ "$f" = "$o" ] && { printf '%s' "$m";
-return;
-}
-  new=$(printf '[%s]' "$(printf '%s\n' "$f" | tr '\n' ',' | sed 's/,$//')");
+f=$(_ctx_filter_openai_pairs "$o")
+  new=$(printf '[%s]' "$(printf '%s\n' "$f" | tr '\n' ',' | sed 's/,$//')")
+  [ "$f" = "$o" ] && case "$new" in *'large or malformed tool '*'omitted during compaction'*) ;;
+ *) printf '%s' "$m";
+return;;
+ esac
 if _ctx_valid "$new" "$cap";
 then log 0 compact "old=${#m} new=${#new} cap=$cap mode=sanitize-openai-pairs";
 printf '%s' "$new";
 else printf '%s' "$m";
 fi;
 }
+_ctx_sanitize_anthropic(){ local m="$1" cap="$2" o f new;
+[ "$PROVIDER" = anthropic ] || { printf '%s' "$m";
+return;
+};
+case "$m" in *'"type":"tool_result"'*|*'"type"'*'"tool_result"'*|*'"type":"tool_use"'*|*'"type"'*'"tool_use"'*) ;;
+ *) printf '%s' "$m";
+return;;
+esac
+  o=$(_ctx_entries "$m");
+f=$(_ctx_filter_anthropic_pairs "$o")
+  new=$(printf '[%s]' "$(printf '%s\n' "$f" | tr '\n' ',' | sed 's/,$//')")
+  [ "$f" = "$o" ] && case "$new" in *'large or malformed tool '*'omitted during compaction'*) ;;
+ *) printf '%s' "$m";
+return;;
+ esac
+if _ctx_valid "$new" "$cap";
+then log 0 compact "old=${#m} new=${#new} cap=$cap mode=sanitize-anthropic-pairs";
+printf '%s' "$new";
+else printf '%s' "$m";
+fi;
+}
+_ctx_sanitize_pairs(){ case "$PROVIDER" in openai) _ctx_sanitize_openai "$1" "$2";; anthropic) _ctx_sanitize_anthropic "$1" "$2";; *) printf '%s' "$1";; esac;
+}
 
 # Context management: shrink long conversations before they exceed model windows.
 trim_context(){ local m="$1" f="${2:-}" cap=$((CTX_LIMIT-AGENT_RESERVE)) o n c a r mid p req res s new kb=$AGENT_KEEP_RECENT half mode localnote compaction_summary_text
-  [ -z "$f" ] && [ ${#m} -le "$cap" ] && { _ctx_sanitize_openai "$m" "$cap";
+  [ -z "$f" ] && [ ${#m} -le "$cap" ] && { _ctx_sanitize_pairs "$m" "$cap";
 return;
 }
   info "Compacting (${#m}b > ${cap}b)${f:+ focus: $f}"
   o=$(_ctx_entries "$m");
-[ "$PROVIDER" = openai ] && o=$(_ctx_filter_openai_pairs "$o")
+case "$PROVIDER" in openai) o=$(_ctx_filter_openai_pairs "$o");; anthropic) o=$(_ctx_filter_anthropic_pairs "$o");; esac
   n=$(printf '%s\n' "$o" | wc -l | tr -d ' ');
 [ "$n" -lt 6 ] && { [ ${#m} -le "$cap" ] && printf '%s' "$m" || _ctx_last_resort "$cap" "$f";
 return;

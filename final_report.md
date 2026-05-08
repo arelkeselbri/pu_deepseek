@@ -7,12 +7,12 @@
 `pu.sh` is now:
 
 ```text
-400 lines
-32 KB
+under 50 KB
 1 shell file
+zero package dependencies
 2 providers: Anthropic + OpenAI
 7 tools: bash, read, write, edit, grep, find, ls
-90 no-API regression tests passing
+105 no-API regression tests passing
 ```
 
 It started as an experiment in how small a coding-agent harness could be. It ended as a surprisingly capable, still tiny, still very honest shell implementation of the core agent loop.
@@ -189,8 +189,9 @@ pu.sh
 ## The numbers
 
 ```text
-Current pu.sh:       396 LOC / 37 KB
-Regression suite:    90 behavioral tests
+Current pu.sh:       under 50 KB shell file
+Package deps:        zero
+Regression suite:    105 behavioral tests
 Providers:           2
 Tools:               7
 Hard runtime deps:   sh + curl + awk + common Unix tools
@@ -199,7 +200,7 @@ Compared Pi size:    ~281 MB with Node/package footprint on this machine
 
 The old headline was "310 lines / 19 KB." That was true before the OpenAI Responses migration, first-run auth, effort gating, compaction/status UX, and hardening work. The honest current headline is:
 
-> **A 400-line coding agent you can read.**
+> **A zero-package-dependency coding agent under 50KB.**
 
 ## What we learned
 
@@ -268,4 +269,4 @@ The most portable useful harness is not a giant binary. It is a shell script wit
 
 ---
 
-*30+ experiments. Many bugs. 2 providers. 7 tools. 400 lines. 0 Node.*
+*30+ experiments. Many bugs. 2 providers. 7 tools. Under 50KB. Zero package dependencies.*

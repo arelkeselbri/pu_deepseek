@@ -421,6 +421,55 @@ for x in d:
 assert "call_ArSXATXNDlBnp0gPrS6lFTCZ" not in [x.get("call_id") for x in d if x.get("type") == "function_call_output"]' \
   && pass "TC-9h" "orphan OpenAI function_call_output is removed before request" \
   || fail "TC-9h" "orphan OpenAI output leaked into request" "rc=$ORPHAN_RC out=$ORPHAN_OUT err=$(cat "$TMPD/orphan.err" 2>/dev/null) req=$ORPHAN_REQ"
+
+# Regression: large OpenAI function_call entries must be stubbed, not dropped,
+# otherwise the matching function_call_output is removed too and the model
+# forgets that a large write/edit already succeeded.
+BIG_CONTENT=$(awk 'BEGIN{for(i=0;i<15000;i++)printf "x"}')
+BIG_MSGS='[{"role":"user","content":"write a big file"},{"type":"function_call","call_id":"call_big_write","name":"write","arguments":"{\"path\":\"docs/x.md\",\"content\":\"'$BIG_CONTENT'\"}"},{"type":"function_call_output","call_id":"call_big_write","output":"Wrote to docs/x.md"}]'
+CTX_LIMIT=50000; AGENT_RESERVE=1000; PROVIDER=openai; LOG="$TMPD/big_call.jsonl"
+BIG_OUT=$(trim_context "$BIG_MSGS")
+valid_json "$BIG_OUT" \
+  && json_field "$BIG_OUT" 'calls=[x for x in d if x.get("type") == "function_call" and x.get("call_id") == "call_big_write"]; assert len(calls) == 1; assert "omitted" in calls[0].get("arguments", ""); assert "xxxxxxxxxxxxxxxxxxxxxxxx" not in calls[0].get("arguments", ""); outs=[x for x in d if x.get("type") == "function_call_output" and x.get("call_id") == "call_big_write"]; assert len(outs) == 1' \
+  && pass "TC-9i" "large OpenAI function_call is stubbed with paired output preserved" \
+  || fail "TC-9i" "large OpenAI function_call was dropped or left huge" "out=${BIG_OUT:0:500}"
+
+# Regression for Anthropic histories: do not send orphan tool_result messages
+# or dangling assistant tool_use messages after resume/compaction.
+ANTH_ORPHAN='[{"role":"user","content":"old task"},{"role":"user","content":[{"type":"tool_result","tool_use_id":"missing","content":"orphan"}]},{"role":"assistant","content":[{"type":"tool_use","id":"dangling","name":"read","input":{}}]},{"role":"assistant","content":[{"type":"tool_use","id":"good","name":"read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"good","content":"ok"}]}]'
+CTX_LIMIT=20000; AGENT_RESERVE=1000; PROVIDER=anthropic; LOG="$TMPD/anthropic_pairs.jsonl"
+ANTH_OUT=$(trim_context "$ANTH_ORPHAN")
+valid_json "$ANTH_OUT" \
+  && json_field "$ANTH_OUT" 'uses={}; results={};
+for i,x in enumerate(d):
+    c=x.get("content")
+    if isinstance(c,list):
+        for b in c:
+            if b.get("type") == "tool_use": uses[b.get("id")] = i
+            if b.get("type") == "tool_result": results[b.get("tool_use_id")] = i
+assert "missing" not in results
+assert "dangling" not in uses
+assert uses.get("good", 99) < results.get("good", -1)' \
+  && pass "TC-9j" "Anthropic orphan/dangling tool pairs are sanitized" \
+  || fail "TC-9j" "Anthropic invalid tool pair survived" "out=${ANTH_OUT:0:500}"
+
+BIG_ANTH_CONTENT=$(awk 'BEGIN{for(i=0;i<15000;i++)printf "x"}')
+BIG_ANTH='[{"role":"user","content":"read a big file"},{"role":"assistant","content":[{"type":"tool_use","id":"toolu_big","name":"read","input":{"path":"big.txt"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_big","content":"'$BIG_ANTH_CONTENT'"}]}]'
+CTX_LIMIT=50000; AGENT_RESERVE=1000; PROVIDER=anthropic; LOG="$TMPD/anthropic_big.jsonl"
+BIG_ANTH_OUT=$(trim_context "$BIG_ANTH")
+valid_json "$BIG_ANTH_OUT" \
+  && json_field "$BIG_ANTH_OUT" 'uses={}; results={}; text="";
+for i,x in enumerate(d):
+    c=x.get("content")
+    if isinstance(c,list):
+        for b in c:
+            if b.get("type") == "tool_use": uses[b.get("id")] = i
+            if b.get("type") == "tool_result": results[b.get("tool_use_id")] = i; text += b.get("content", "")
+assert uses.get("toolu_big", 99) < results.get("toolu_big", -1)
+assert "omitted during compaction" in text
+assert "xxxxxxxxxxxxxxxxxxxxxxxx" not in text' \
+  && pass "TC-9k" "large Anthropic tool_result is stubbed with pair preserved" \
+  || fail "TC-9k" "large Anthropic tool_result pair not preserved" "out=${BIG_ANTH_OUT:0:500}"
 CTX_LIMIT=$OLD_CTX; AGENT_RESERVE=$OLD_RES; AGENT_KEEP_RECENT=$OLD_KEEP; HISTORY=$OLD_HIST; PIPE=$OLD_PIPE; MAX_STEPS=$OLD_MAX; PROVIDER=$OLD_PROVIDER; MODEL=$OLD_MODEL; EFFORT_OK=$OLD_EFFORT_OK; OPENAI_API_KEY=$OLD_KEY
 call_api(){ printf '%s' '{"error":{"message":"rate limit"}}'; }
 

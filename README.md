@@ -2,7 +2,7 @@
   <img src="logo.png" alt="pu.sh" width="500">
 </p>
 
-<p align="center"><strong>A full coding-agent harness in 400 lines of shell. Pronounced exactly how you think.</strong></p>
+<p align="center"><strong>A zero-package-dependency coding agent under 50KB. Pronounced exactly how you think.</strong></p>
 
 <p align="center"><em>Finally, a slop cannon small enough to fit in your pocket.</em></p>
 
@@ -11,12 +11,12 @@ curl -sL pu.dev/pu.sh -o pu.sh && chmod +x pu.sh
 ./pu.sh
 ```
 
-That's the entire install. No npm. No pip. No Docker. No runtime. One shell file, common Unix tools, `curl`, `awk`, and an API key.
+That's the entire install. No npm. No pip. No Docker. No Node. One shell file, common Unix tools, `curl`, `awk`, and an API key.
 
 ## What
 
 ```sh
-# Zero install. Literally.
+# Zero package dependencies. Literally.
 curl -sL pu.dev/pu.sh > pu.sh && chmod +x pu.sh
 
 # First run walks you through provider, key, model, and effort.
@@ -70,7 +70,7 @@ The answer is a shell script. The agent loop itself — send prompt, parse respo
 | **Checkpoint/resume** | Writes `.pu-history.json` by default; override with `AGENT_HISTORY=file.json` |
 | **Confirmation mode** | `AGENT_CONFIRM=1` asks before every tool execution; safely denies when no TTY |
 | **Event log** | Every step logged to `.pu-events.jsonl` as structured JSONL |
-| **Regression tests** | `bash eval/test_real.sh` runs 90 no-API behavioral tests |
+| **Regression tests** | `bash eval/test_real.sh` runs 105 no-API behavioral tests |
 
 ## What it can't do
 
@@ -86,19 +86,19 @@ Let's be honest. The remaining gap to a production harness needs a real runtime:
 - No full model registry/pricing database
 - No general JSON parser; it uses targeted `awk` parsing for provider shapes
 
-`pu.sh` is the same slop cannon but small enough that you can read every line and know exactly where the slop is coming from.
+`pu.sh` is the same slop cannon but small enough to inspect end to end and know exactly where the slop is coming from.
 
 ## The Size
 
 ```text
-pu.sh                37 KB / 396 LOC  █  (sh + curl + awk + common Unix tools)
+pu.sh              < 50 KB            █  (sh + curl + awk + common Unix tools)
 Claude Code         209 MB            ██████████████████████████
 Goose CLI           237 MB            █████████████████████████████
 Pi + Node           281 MB            ███████████████████████████████████
 SWE-agent Docker    1.8 GB            ██████████████████████████████████████████████████████████████...
 ```
 
-*Measured locally on macOS arm64. `pu.sh` is `wc -c`/`wc -l` on the file. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
+*Measured locally on macOS arm64. Current generated `pu.sh` is 45.98 KB by `wc -c`; the headline stays under 50 KB. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
 
 ## Configuration
 
@@ -160,7 +160,7 @@ All env vars. Optional `~/.pu.env` is created by `/login`/first run with `0600`-
 └─────────────────────────────────────────┘
 ```
 
-400 lines. 7 tools. 2 providers. 1 file. No Node.
+Zero package dependencies. Under 50KB. 7 tools. 2 providers. 1 file.
 
 OpenAI uses `/v1/responses` with Responses-style tools and `max_output_tokens`. Anthropic uses `/v1/messages`. The parser is targeted `awk`, not a general JSON implementation.
 
@@ -179,7 +179,7 @@ For details, see [How pu works](docs/how-pu-works.md).
 ## Testing
 
 ```sh
-# No API calls, no cost. Current expected result: PASS: 90 FAIL: 0.
+# No API calls, no cost. Current expected result: PASS: 105 FAIL: 0.
 bash eval/test_real.sh
 
 # Shell syntax.
@@ -222,7 +222,7 @@ We [compare against Pi](eval/COMPARISON.md) feature-by-feature. Pi wins on exten
 ## FAQ
 
 **Is this production-ready?**
-It's called `pu.sh`. It's a 32KB slop cannon that talks to LLM APIs via `curl`. You tell me.
+It's called `pu.sh`. It's an under-50KB slop cannon that talks to LLM APIs via `curl`. You tell me.
 
 **Should I use this instead of Pi/Claude Code/Cursor?**
 For daily coding, probably not. Use a real tool. For CI/CD, containers, edge boxes, quick scripts, or understanding how agents actually work — `./pu.sh` and see what happens.
@@ -238,4 +238,4 @@ An AI and a human ran experiments, argued with shell, broke OpenAI schemas, fixe
 
 ## License
 
-MIT — see [LICENSE](LICENSE). It's 400 lines. Go nuts.
+MIT — see [LICENSE](LICENSE). It's under 50KB. Go nuts.

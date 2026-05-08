@@ -1,0 +1,253 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/minify-pu [--check] [--no-tests]
+
+Generate pu.sh from pu-unminified.sh with shfmt -mn -ln=posix, then pack
+safe command-boundary newlines while preserving function-level anchors so the
+generated script remains practical for coding agents to inspect.
+
+Options:
+  --check     verify pu.sh is up to date without rewriting it
+  --no-tests  skip eval/test_real.sh after syntax checks
+
+Environment:
+  PU_MINIFY_WIDTH  preferred packed line width; default: 180
+EOF
+}
+
+CHECK=0
+RUN_TESTS=1
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) CHECK=1 ;;
+    --no-tests) RUN_TESTS=0 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+command -v shfmt >/dev/null 2>&1 || {
+  printf '%s\n' "Error: shfmt is required. Install it, for example with: brew install shfmt" >&2
+  exit 1
+}
+
+EXPECTED_SHFMT=${PU_SHFMT_VERSION:-3.13.1}
+ACTUAL_SHFMT=$(shfmt --version)
+if [ "$EXPECTED_SHFMT" != any ] && [ "$ACTUAL_SHFMT" != "$EXPECTED_SHFMT" ]; then
+  printf '%s\n' "Error: shfmt $EXPECTED_SHFMT is required; found $ACTUAL_SHFMT" >&2
+  printf '%s\n' "Set PU_SHFMT_VERSION=any to bypass this version guard." >&2
+  exit 1
+fi
+
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+ROOT=$(CDPATH= cd "$SCRIPT_DIR/.." && pwd -P)
+SRC="$ROOT/pu-unminified.sh"
+OUT="$ROOT/pu.sh"
+TMPDIR=${TMPDIR:-/tmp}
+TMP=$(mktemp "$TMPDIR/pu-sh.XXXXXX") || exit 1
+MINIFY_WIDTH=${PU_MINIFY_WIDTH:-180}
+
+cleanup() {
+  [ -z "${TMP:-}" ] || rm -f "$TMP"
+}
+trap cleanup EXIT HUP INT TERM
+
+case "$MINIFY_WIDTH" in
+  '' | *[!0-9]*)
+    printf '%s\n' "Error: PU_MINIFY_WIDTH must be a positive integer" >&2
+    exit 1
+    ;;
+  0)
+    printf '%s\n' "Error: PU_MINIFY_WIDTH must be greater than zero" >&2
+    exit 1
+    ;;
+esac
+
+pack_shell_lines() {
+  awk -v width="$MINIFY_WIDTH" '
+    function flush() {
+      if (buf != "") {
+        print buf
+        buf = ""
+      }
+    }
+    function trim(s) {
+      sub(/^[ \t]*/, "", s)
+      sub(/[ \t]*$/, "", s)
+      return s
+    }
+    function odd_trailing_slashes(s, n, i) {
+      n = 0
+      for (i = length(s); i > 0 && substr(s, i, 1) == "\\"; i--) n++
+      return n % 2
+    }
+    function join_sep(a, b, ta, tb) {
+      ta = trim(a)
+      tb = trim(b)
+      if (tb ~ /^;;/) return ""
+      if (ta ~ /(\|\||&&|&|\|)$/) return " "
+      if (ta ~ /(^|[;&| \t])(then|do|else|in)$/) return " "
+      if (ta ~ /\{$/) return " "
+      if (ta ~ /^[^;&|{}]*\)$/ && ta !~ /\$\(/) return " "
+      if (ta ~ /;;$/) return " "
+      return ";"
+    }
+    function is_anchor(s) {
+      return s ~ /^[_A-Za-z][_A-Za-z0-9]*\(\)\{$/
+    }
+    function is_standalone(s) {
+      return s ~ /^TASK=""/ || s ~ /^(SYSTEM|SP|RP|WP|EP|GP|FP|LP|TD|TF|RF)=/
+    }
+    function ends_block(s) {
+      return s == "}" || s ~ /^(fi|done|esac)([;&]|$)/
+    }
+    function note_heredoc(s, rest, d) {
+      if (s !~ /<</) return
+      rest = s
+      sub(/^.*<</, "", rest)
+      sub(/^-/, "", rest)
+      sub(/^[ \t]*/, "", rest)
+      if (match(rest, /^["'\'']?[A-Za-z_][A-Za-z0-9_]*["'\'']?/)) {
+        d = substr(rest, RSTART, RLENGTH)
+        gsub(/["'\'']/, "", d)
+        heredoc_next = d
+        opens_heredoc = 1
+      }
+    }
+    function scan(s, i, c) {
+      opens_heredoc = 0
+      heredoc_before = heredoc != ""
+      sq_before = sq
+      dq_before = dq
+
+      if (heredoc != "") {
+        if (s == heredoc) heredoc = ""
+        return
+      }
+
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (esc) {
+          esc = 0
+          continue
+        }
+        if (sq) {
+          if (c == "'\''") sq = 0
+          continue
+        }
+        if (c == "\\") {
+          if (dq || !sq) esc = 1
+          continue
+        }
+        if (dq) {
+          if (c == "\"") dq = 0
+          continue
+        }
+        if (c == "'\''") {
+          sq = 1
+          continue
+        }
+        if (c == "\"") {
+          dq = 1
+          continue
+        }
+      }
+      if (!sq && !dq) note_heredoc(s)
+      if (heredoc_next != "") {
+        heredoc = heredoc_next
+        heredoc_next = ""
+      }
+    }
+    function safe_line(s) {
+      return !heredoc_before && !opens_heredoc && !sq_before && !dq_before && !sq && !dq && !odd_trailing_slashes(s)
+    }
+    NR == 1 && $0 ~ /^#!/ {
+      print
+      print "# generated from pu-unminified.sh; edit that file, then run scripts/minify-pu"
+      next
+    }
+    {
+      line = $0
+      scan(line)
+
+      if (is_anchor(line)) {
+        flush()
+      }
+
+      if (is_standalone(line)) {
+        flush()
+        print line
+        next
+      }
+
+      if (!safe_line(line)) {
+        flush()
+        print line
+        next
+      }
+
+      if (buf == "") {
+        buf = line
+        next
+      }
+
+      sep = join_sep(buf, line)
+      if (length(buf) + length(sep) + length(line) > width) {
+        flush()
+        buf = line
+      } else {
+        buf = buf sep line
+      }
+
+      if (ends_block(line)) {
+        flush()
+      }
+    }
+    END {
+      flush()
+    }
+  '
+}
+
+printf '%s\n' "Generating pu.sh with shfmt $ACTUAL_SHFMT..."
+shfmt -mn -ln=posix "$SRC" | pack_shell_lines > "$TMP"
+chmod 755 "$TMP"
+
+printf '%s\n' "Checking shell syntax..."
+sh -n "$TMP"
+bash -n "$TMP"
+
+if [ "$CHECK" = 1 ]; then
+  if [ ! -f "$OUT" ]; then
+    printf '%s\n' "Error: pu.sh does not exist; run scripts/minify-pu" >&2
+    exit 1
+  fi
+  if ! cmp -s "$TMP" "$OUT"; then
+    printf '%s\n' "Error: pu.sh is stale; run scripts/minify-pu" >&2
+    exit 1
+  fi
+  TEST_AGENT="$OUT"
+else
+  mv "$TMP" "$OUT"
+  TMP=
+  chmod 755 "$OUT"
+  TEST_AGENT="$OUT"
+fi
+
+if [ "$RUN_TESTS" = 1 ]; then
+  printf '%s\n' "Running behavioral tests against $TEST_AGENT..."
+  AGENT="$TEST_AGENT" bash "$ROOT/eval/test_real.sh"
+fi
+
+wc -l -c "$OUT"
