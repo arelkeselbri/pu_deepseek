@@ -378,7 +378,7 @@ json_escape(){ printf '%s' "$1" | LC_ALL=C tr -d '\000-\010\013\014\016-\037' | 
 }
 
 # Terminal UI helpers: colorized status, error, debug, and assistant text output.
-info(){ [ "$PIPE" = 0 ] && printf '\r\033[K\033[36m[pu-unminified]\033[0m %s\n' "$*" >&2 || true;
+info(){ [ "$PIPE" = 0 ] && printf '\r\033[K\033[36m[pu]\033[0m %s\n' "$*" >&2 || true;
 }
 err(){ printf '\r\033[K\033[31m[!] %s\033[0m\n' "$*" >&2;
 }

@@ -111,7 +111,7 @@ printf '%s' "$1"|awk 'BEGIN{RS="\001"}{d=0;q=0;e=0;for(i=1;i<=length($0);i++){c=
 json_escape(){
 printf '%s' "$1"|LC_ALL=C tr -d '\000-\010\013\014\016-\037'|awk '{gsub(/\\/,"\\\\")} {gsub(/"/,"\\\"")} {gsub(/\t/,"\\t")} {gsub(/\r/,"\\r")} NR>1{printf "\\n"} {printf "%s",$0}'
 }
-info(){ [ "$PIPE" = 0 ]&&printf '\r\033[K\033[36m[pu-unminified]\033[0m %s\n' "$*" >&2||true;}
+info(){ [ "$PIPE" = 0 ]&&printf '\r\033[K\033[36m[pu]\033[0m %s\n' "$*" >&2||true;}
 err(){ printf '\r\033[K\033[31m[!] %s\033[0m\n' "$*" >&2;}
 dbg(){ [ "$VERBOSE" = 1 ]&&printf '\r\033[K[v] %s\n' "$*" >&2||true;}
 _p(){ case "$1" in "$PWD"/*)printf '%s' "${1#"$PWD"/}";; "$HOME"/*)printf '~%s' "${1#"$HOME"}";; *)printf '%s' "$1";esac
