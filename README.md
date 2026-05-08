@@ -98,7 +98,7 @@ Pi + Node           281 MB            ██████████████
 SWE-agent Docker    1.8 GB            ██████████████████████████████████████████████████████████████...
 ```
 
-*Measured locally on macOS arm64. Current generated `pu.sh` is 49,284 bytes (48.13 KiB) by `wc -c`; the headline stays under 50 KB. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
+*Measured locally on macOS arm64. Current generated `pu.sh` is 49,276 bytes (48.12 KiB) by `wc -c`; the headline stays under 50 KB. Larger tools include their runtime/package footprints as described in [final_report.md](final_report.md).*
 
 ## Configuration
 

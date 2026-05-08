@@ -13,8 +13,8 @@ bash eval/test_real.sh
 Current size:
 
 ```text
-49284 bytes pu.sh
-482 lines pu.sh
+49276 bytes pu.sh
+481 lines pu.sh
 ```
 
 ## Recently fixed

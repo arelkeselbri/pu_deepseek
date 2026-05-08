@@ -45,8 +45,7 @@ Current working directory: $(pwd)
 Your source code is at $(cd "$(dirname "$0")"&&pwd)/$(basename "$0"). Use read to inspect it if asked about your capabilities/configuration.}"
 while [ $# -gt 0 ];do
 case "$1" in -h|--help)printf '%s\n' 'pu-unminified.sh — readable educational build of pu.sh (sh+curl, no deps)' 'Usage: ./pu-unminified.sh "task" | ./pu-unminified.sh (interactive) | --pipe | --cost | -v' 'Env: ANTHROPIC_API_KEY OPENAI_API_KEY AGENT_MODEL AGENT_PROVIDER AGENT_SYSTEM AGENT_MAX_STEPS AGENT_MAX_TOKENS AGENT_LOG AGENT_CONFIRM AGENT_VERBOSE AGENT_REASONING_SUMMARY AGENT_CONTEXT_LIMIT AGENT_RESERVE AGENT_TOOL_TRUNC AGENT_READ_MAX AGENT_LOG_TRUNC AGENT_HISTORY AGENT_THINKING/AGENT_EFFORT AGENT_PRICE_* ~/.pu.env' '7 tools, multi-turn, retries, JSONL logging, pipe mode, !command; auto-compaction summarizes older turns; /compact [focus] runs it manually.'
-exit 0;; -v|--version)echo "pu-unminified.sh 1.0.0";exit 0;; --pipe|-p)PIPE=1;shift;; --cost)COST=1;shift;; -i)INTERACTIVE=1;shift;; -n|--no-interactive)INTERACTIVE=-1;shift;;
-*)break;esac
+exit 0;; -v|--version)echo "${0##*/} 0.1.0";exit 0;; --pipe|-p)PIPE=1;shift;; --cost)COST=1;shift;; -i)INTERACTIVE=1;shift;; -n|--no-interactive)INTERACTIVE=-1;shift;; *)break;esac
 done;for _dep in curl awk;do command -v $_dep >/dev/null 2>&1||{ printf '\033[31m[!] %s not found\033[0m\n' "$_dep" >&2;exit 1;}
 done;RUNSH=$(command -v bash 2>/dev/null||echo sh)
 jp(){
